@@ -16,7 +16,7 @@ import sys
 import io
 
 # 全局配置 - 用户只需修改此行为自己的存储路径
-STORAGE_DIR = r"/var/lib"
+STORAGE_DIR = r"/var/lib/kubernetes-storage/file_upload/file_container"
 
 def main():
     # 默认配置
@@ -582,6 +582,12 @@ def main():
                         .btn.secondary:hover {
                             background-color: #5a6268;
                         }
+                        .btn:disabled {
+                            background-color: #ccc;
+                            cursor: not-allowed;
+                            transform: none;
+                            box-shadow: none;
+                        }
                         .file-input {
                             margin: 20px 0;
                             padding: 10px;
@@ -622,6 +628,39 @@ def main():
                         .theme-toggle:hover {
                             background: #555;
                         }
+                        /* 进度条样式 */
+                        .progress-container {
+                            margin: 20px 0;
+                            display: none;
+                        }
+                        .progress-bar {
+                            width: 100%;
+                            height: 20px;
+                            background-color: #e0e0e0;
+                            border-radius: 10px;
+                            overflow: hidden;
+                            margin: 10px 0;
+                        }
+                        .progress-fill {
+                            height: 100%;
+                            background-color: #4CAF50;
+                            width: 0%;
+                            transition: width 0.3s ease;
+                            border-radius: 10px;
+                        }
+                        .progress-info {
+                            font-size: 14px;
+                            color: #666;
+                            margin: 10px 0;
+                            line-height: 1.5;
+                        }
+                        .progress-details {
+                            display: flex;
+                            justify-content: space-between;
+                            margin-top: 10px;
+                            font-size: 12px;
+                            color: #888;
+                        }
                         /* 深色主题样式 */
                         body.dark-theme {
                             background-color: #121212;
@@ -651,6 +690,15 @@ def main():
                             background: #ccc;
                             color: #333;
                         }
+                        body.dark-theme .progress-bar {
+                            background-color: #333;
+                        }
+                        body.dark-theme .progress-info {
+                            color: #ccc;
+                        }
+                        body.dark-theme .progress-details {
+                            color: #aaa;
+                        }
                     </style>
                 </head>
                 <body>
@@ -660,12 +708,25 @@ def main():
                         <h1>文件上传</h1>
                         <p>请选择要上传的文件：</p>
                         
-                        <form enctype="multipart/form-data" method="post">
+                        <form id="uploadForm" enctype="multipart/form-data">
                             <div class="file-input">
-                                <input type="file" name="file" required multiple>
+                                <input type="file" id="fileInput" name="file" required multiple>
                             </div>
-                            <button type="submit" class="btn">上传文件</button>
+                            <button type="submit" class="btn" id="uploadBtn">上传文件</button>
                         </form>
+                        
+                        <!-- 进度条 -->
+                        <div class="progress-container" id="progressContainer">
+                            <div class="progress-info" id="progressInfo">准备上传...</div>
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="progressFill"></div>
+                            </div>
+                            <div class="progress-details">
+                                <span id="speed">网速: 0 B/s</span>
+                                <span id="timeElapsed">已用时间: 00:00</span>
+                                <span id="timeRemaining">剩余时间: --:--</span>
+                            </div>
+                        </div>
                         
                         <a href="/" class="btn secondary">返回首页</a>
                     </div>
@@ -696,6 +757,134 @@ def main():
                                 container.style.transform = 'translateY(0)';
                             }, 100);
                         });
+                        
+                        // 文件上传进度功能
+                        document.getElementById('uploadForm').addEventListener('submit', function(e) {
+                            e.preventDefault();
+                            
+                            const fileInput = document.getElementById('fileInput');
+                            const files = fileInput.files;
+                            if (files.length === 0) {
+                                alert('请选择要上传的文件');
+                                return;
+                            }
+                            
+                            // 显示进度条
+                            const progressContainer = document.getElementById('progressContainer');
+                            const progressFill = document.getElementById('progressFill');
+                            const progressInfo = document.getElementById('progressInfo');
+                            const speedElement = document.getElementById('speed');
+                            const timeElapsedElement = document.getElementById('timeElapsed');
+                            const timeRemainingElement = document.getElementById('timeRemaining');
+                            const uploadBtn = document.getElementById('uploadBtn');
+                            
+                            progressContainer.style.display = 'block';
+                            uploadBtn.disabled = true;
+                            uploadBtn.textContent = '上传中...';
+                            
+                            // 创建FormData
+                            const formData = new FormData();
+                            for (let i = 0; i < files.length; i++) {
+                                formData.append('file', files[i]);
+                            }
+                            
+                            // 初始化进度跟踪变量
+                            let startTime = Date.now();
+                            let lastUpdateTime = startTime;
+                            let lastLoaded = 0;
+                            
+                            // 创建XMLHttpRequest
+                            const xhr = new XMLHttpRequest();
+                            
+                            // 监听进度事件
+                            xhr.upload.addEventListener('progress', function(e) {
+                                if (e.lengthComputable) {
+                                    const now = Date.now();
+                                    const elapsed = now - startTime;
+                                    const sinceLastUpdate = now - lastUpdateTime;
+                                    
+                                    const loaded = e.loaded;
+                                    const total = e.total;
+                                    const percent = Math.round((loaded / total) * 100);
+                                    
+                                    // 计算网速
+                                    const bytesSinceLastUpdate = loaded - lastLoaded;
+                                    const speedBps = bytesSinceLastUpdate / (sinceLastUpdate / 1000);
+                                    
+                                    // 更新进度条
+                                    progressFill.style.width = percent + '%';
+                                    progressInfo.textContent = `上传进度: ${percent}% (${formatFileSize(loaded)} / ${formatFileSize(total)})`;
+                                    
+                                    // 更新网速
+                                    speedElement.textContent = `网速: ${formatSpeed(speedBps)}`;
+                                    
+                                    // 更新已用时间
+                                    timeElapsedElement.textContent = `已用时间: ${formatTime(elapsed)}`;
+                                    
+                                    // 计算并更新剩余时间
+                                    if (percent > 0 && percent < 100) {
+                                        const estimatedTotalTime = (elapsed / percent) * 100;
+                                        const remainingTime = estimatedTotalTime - elapsed;
+                                        timeRemainingElement.textContent = `剩余时间: ${formatTime(remainingTime)}`;
+                                    } else {
+                                        timeRemainingElement.textContent = `剩余时间: --:--`;
+                                    }
+                                    
+                                    // 更新最后更新时间和已加载字节数
+                                    lastUpdateTime = now;
+                                    lastLoaded = loaded;
+                                }
+                            });
+                            
+                            // 上传完成事件
+                            xhr.addEventListener('load', function() {
+                                if (xhr.status === 200) {
+                                    // 上传成功，显示结果
+                                    document.open();
+                                    document.write(xhr.responseText);
+                                    document.close();
+                                } else {
+                                    progressInfo.textContent = `上传失败: ${xhr.statusText}`;
+                                    uploadBtn.disabled = false;
+                                    uploadBtn.textContent = '上传文件';
+                                }
+                            });
+                            
+                            // 上传错误事件
+                            xhr.addEventListener('error', function() {
+                                progressInfo.textContent = '上传失败: 网络错误';
+                                uploadBtn.disabled = false;
+                                uploadBtn.textContent = '上传文件';
+                            });
+                            
+                            // 发送请求
+                            xhr.open('POST', '/upload', true);
+                            xhr.send(formData);
+                        });
+                        
+                        // 格式化文件大小
+                        function formatFileSize(bytes) {
+                            if (bytes === 0) return '0 B';
+                            const k = 1024;
+                            const sizes = ['B', 'KB', 'MB', 'GB'];
+                            const i = Math.floor(Math.log(bytes) / Math.log(k));
+                            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+                        }
+                        
+                        // 格式化网速
+                        function formatSpeed(bps) {
+                            if (bps < 1024) return bps.toFixed(0) + ' B/s';
+                            if (bps < 1024 * 1024) return (bps / 1024).toFixed(2) + ' KB/s';
+                            return (bps / (1024 * 1024)).toFixed(2) + ' MB/s';
+                        }
+                        
+                        // 格式化时间（毫秒转为 mm:ss）
+                        function formatTime(ms) {
+                            const totalSeconds = Math.floor(ms / 1000);
+                            const minutes = Math.floor(totalSeconds / 60);
+                            const seconds = totalSeconds % 60;
+                            return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+                        }
                     </script>
                 </body>
                 </html>
